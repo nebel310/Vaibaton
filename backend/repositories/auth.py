@@ -7,7 +7,6 @@ from sqlalchemy import select, delete
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timezone, timedelta
-from utils.confirm_email import generate_email_token, send_confirmation_email, confirm_email_token
 
 
 
@@ -31,39 +30,15 @@ class UserRepository:
               
             hashed_password = pwd_context.hash(user_data.password)
             
-            token = generate_email_token(user_data.email)
-            send_confirmation_email(user_data.email, token)
-            
             user = UserOrm(
                 username=user_data.username,
                 email=user_data.email,
-                hashed_password=hashed_password,
-                is_confirmed=user_data.is_confirmed
+                hashed_password=hashed_password
             )
             session.add(user)
             await session.flush()
             await session.commit()
             return user.id
-    
-    @classmethod
-    async def confirm_email(cls, token:str, email:str) -> bool:
-        async with new_session() as session:
-            email_from_token = confirm_email_token(token)
-            query = select(UserOrm).where(UserOrm.email == email_from_token)
-            result = await session.execute(query)
-            user = result.scalars().first()
-            
-            if user:
-                user.is_confirmed = True
-                
-            elif not user and email_from_token is None:
-                new_token = generate_email_token(email)
-                send_confirmation_email(email, new_token)
-                raise ValueError('Ссылка просрочена, на почту отправлена новая')
-            
-            await session.flush()
-            await session.commit()
-            return user.is_confirmed
     
     @classmethod
     async def authenticate_user(cls, email: str, password: str) -> UserOrm | None:
@@ -72,7 +47,7 @@ class UserRepository:
             result = await session.execute(query)
             user = result.scalars().first()
             
-            if not user or not pwd_context.verify(password, user.hashed_password) or not user.is_confirmed:
+            if not user or not pwd_context.verify(password, user.hashed_password):
                 return None
             
             return user

@@ -22,15 +22,6 @@ async def register_user(user_data: SUserRegister):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/confirm/token={token}/email={email}")
-async def confirm_email(token: str, email: str):
-    try:
-        is_confirmed = await UserRepository.confirm_email(token, email)
-        return {"success": True, "is_confirmed": is_confirmed}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/login")
 async def login_user(login_data: SUserLogin):
     user = await UserRepository.authenticate_user(login_data.email, login_data.password)
