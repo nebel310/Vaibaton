@@ -4,7 +4,7 @@ services:
     container_name: postgres_db
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=123456
+      - POSTGRES_PASSWORD=hgihgdfhgidjgildfjog
       - POSTGRES_DB=vaibaton_db
     ports:
       - "5432:5432"
@@ -22,7 +22,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:123456@db:5432/vaibaton_db
+      - DATABASE_URL=postgresql+asyncpg://postgres:hgihgdfhgidjgildfjog@db:5432/vaibaton_db
       - SECRET_KEY='AFLJsKFHHKJHhfks'
       - ALGORITHM=HS256
       - REFRESH_TOKEN_EXPIRE_DAYS=7
