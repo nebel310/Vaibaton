@@ -24,7 +24,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:123456@db:5432/vaibaton_db
       - SECRET_KEY='AFLJsKFHHKJHhfks'
-      - ALGORITHM='HS256'
+      - ALGORITHM=HS256
       - REFRESH_TOKEN_EXPIRE_DAYS=7
       - SECURITY_PASSWORD_SALT='DAFSPJFHgyFA8'
       - ACCESS_TOKEN_EXPIRE_MINUTES=15

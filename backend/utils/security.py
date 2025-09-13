@@ -5,8 +5,8 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 from database import new_session
-from models.auth import BlacklistedTokenOrm, UserOrm
-from sqlalchemy import select, delete
+from models.auth import BlacklistedTokenOrm, UserOrm, RoleOrm  # Добавляем RoleOrm
+from sqlalchemy import select, delete, join  # Добавляем join
 from repositories.auth import UserRepository
 
 
@@ -20,14 +20,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES'))
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOrm:
     credentials_exception = HTTPException(
@@ -55,7 +53,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOrm:
     except JWTError:
         raise credentials_exception
     
-    user = await UserRepository.get_user_by_email(email)
+    # Обновляем запрос для включения информации о роли
+    async with new_session() as session:
+        query = select(UserOrm).join(RoleOrm).where(UserOrm.email == email)
+        result = await session.execute(query)
+        user = result.scalars().first()
+    
     if user is None:
         raise credentials_exception
     

@@ -1,12 +1,13 @@
 import os
 from dotenv import load_dotenv
 from database import new_session
-from models.auth import UserOrm, RefreshTokenOrm, BlacklistedTokenOrm
-from schemas.auth import SUserRegister
-from sqlalchemy import select, delete
+from models.auth import UserOrm, RefreshTokenOrm, BlacklistedTokenOrm, RoleOrm, EventOrm, UserEventOrm
+from schemas.auth import SUserRegister, SEventCreate
+from sqlalchemy import select, delete, func, and_, or_
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timezone, timedelta
+from typing import List
 
 
 
@@ -43,7 +44,8 @@ class UserRepository:
     @classmethod
     async def authenticate_user(cls, email: str, password: str) -> UserOrm | None:
         async with new_session() as session:
-            query = select(UserOrm).where(UserOrm.email == email)
+            # Добавляем join с таблицей ролей
+            query = select(UserOrm).join(RoleOrm).where(UserOrm.email == email)
             result = await session.execute(query)
             user = result.scalars().first()
             
@@ -55,14 +57,16 @@ class UserRepository:
     @classmethod
     async def get_user_by_email(cls, email: str) -> UserOrm | None:
         async with new_session() as session:
-            query = select(UserOrm).where(UserOrm.email == email)
+            # Добавляем join с таблицей ролей
+            query = select(UserOrm).join(RoleOrm).where(UserOrm.email == email)
             result = await session.execute(query)
             return result.scalars().first()
     
     @classmethod
     async def get_user_by_id(cls, user_id: int) -> UserOrm | None:
         async with new_session() as session:
-            query = select(UserOrm).where(UserOrm.id == user_id)
+            # Добавляем join с таблицей ролей
+            query = select(UserOrm).join(RoleOrm).where(UserOrm.id == user_id)
             result = await session.execute(query)
             return result.scalars().first()
     
@@ -121,3 +125,133 @@ class UserRepository:
             )
             session.add(blacklisted_token)
             await session.commit()
+
+
+
+class EventRepository:
+    @classmethod
+    async def create_event(cls, event_data: SEventCreate) -> int:
+        async with new_session() as session:
+            event = EventOrm(**event_data.model_dump())
+            session.add(event)
+            await session.flush()
+            await session.commit()
+            return event.id
+    
+    @classmethod
+    async def get_all_events(cls, offset: int = 0, limit: int = 10, user_id: int = None) -> List[EventOrm]:
+        async with new_session() as session:
+            query = select(EventOrm)
+            
+            if user_id is not None:
+                # Добавляем флаг, зарегистрирован ли пользователь на мероприятие
+                query = query.add_columns(
+                    select(UserEventOrm.id)
+                    .where(and_(
+                        UserEventOrm.user_id == user_id,
+                        UserEventOrm.event_id == EventOrm.id
+                    ))
+                    .exists()
+                    .label("is_user_registered")
+                )
+            
+            query = query.offset(offset).limit(limit).order_by(EventOrm.created_at.desc())
+            result = await session.execute(query)
+            
+            if user_id is not None:
+                events = []
+                for event, is_registered in result:
+                    event.is_user_registered = is_registered
+                    events.append(event)
+                return events
+            else:
+                return result.scalars().all()
+    
+    @classmethod
+    async def get_event_by_id(cls, event_id: int, user_id: int = None) -> EventOrm:
+        async with new_session() as session:
+            query = select(EventOrm).where(EventOrm.id == event_id)
+            
+            if user_id is not None:
+                query = query.add_columns(
+                    select(UserEventOrm.id)
+                    .where(and_(
+                        UserEventOrm.user_id == user_id,
+                        UserEventOrm.event_id == event_id
+                    ))
+                    .exists()
+                    .label("is_user_registered")
+                )
+            
+            result = await session.execute(query)
+            
+            if user_id is not None:
+                event, is_registered = result.first()
+                if event:
+                    event.is_user_registered = is_registered
+                return event
+            else:
+                return result.scalars().first()
+    
+    @classmethod
+    async def register_for_event(cls, user_id: int, event_id: int) -> bool:
+        async with new_session() as session:
+            # Проверяем, существует ли мероприятие
+            event = await cls.get_event_by_id(event_id)
+            if not event or not event.is_active or event.current_participants >= event.max_participants:
+                return False
+            
+            # Проверяем, не зарегистрирован ли уже пользователь
+            existing_registration = await session.execute(
+                select(UserEventOrm).where(and_(
+                    UserEventOrm.user_id == user_id,
+                    UserEventOrm.event_id == event_id
+                ))
+            )
+            
+            if existing_registration.scalars().first():
+                return False
+            
+            # Регистрируем пользователя
+            user_event = UserEventOrm(user_id=user_id, event_id=event_id)
+            session.add(user_event)
+            
+            # Увеличиваем счетчик участников
+            event.current_participants += 1
+            await session.commit()
+            return True
+    
+    @classmethod
+    async def cancel_registration(cls, user_id: int, event_id: int) -> bool:
+        async with new_session() as session:
+            # Находим регистрацию
+            registration = await session.execute(
+                select(UserEventOrm).where(and_(
+                    UserEventOrm.user_id == user_id,
+                    UserEventOrm.event_id == event_id
+                ))
+            )
+            registration = registration.scalars().first()
+            
+            if not registration:
+                return False
+            
+            # Удаляем регистрацию
+            await session.delete(registration)
+            
+            # Уменьшаем счетчик участников
+            event = await cls.get_event_by_id(event_id)
+            if event:
+                event.current_participants -= 1
+                if event.current_participants < 0:
+                    event.current_participants = 0
+            
+            await session.commit()
+            return True
+    
+    @classmethod
+    async def get_user_events(cls, user_id: int) -> List[EventOrm]:
+        async with new_session() as session:
+            query = select(EventOrm).join(UserEventOrm).where(UserEventOrm.user_id == user_id)
+            result = await session.execute(query)
+            return result.scalars().all()
